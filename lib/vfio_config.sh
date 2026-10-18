@@ -269,7 +269,7 @@ show_gpu_mode_status() {
 
     local vm_state="shut off"
     if command -v virsh >/dev/null 2>&1; then
-        vm_state=$(virsh -c qemu:///system domstate win11 2>/dev/null || echo "not defined")
+        vm_state=$(timeout 2s virsh -c qemu:///system domstate win11 2>/dev/null || echo "not running / unreachable")
     fi
     printf "  • 'win11' VM State:              ${COLOR_BOLD}%s${COLOR_RESET}\n\n" "$vm_state"
 

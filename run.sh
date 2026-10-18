@@ -21,7 +21,7 @@ VM_NAME="win11"
 SHM_FILE="/dev/shm/looking-glass"
 
 virsh_cmd() {
-    virsh -c qemu:///system "$@"
+    timeout 15s virsh -c qemu:///system "$@"
 }
 
 cleanup_session() {
