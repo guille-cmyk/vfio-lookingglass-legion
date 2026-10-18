@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# /etc/libvirt/hooks/qemu - Automated Libvirt hook for VFIO & Looking Glass
+# Executes automatically whenever any VM starts or stops
+GUEST_NAME="$1"
+OPERATION="$2"
+SUB_OPERATION="$3"
+
+LOG_FILE="/var/log/libvirt-vfio-hook.log"
+
+log_hook() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$GUEST_NAME] [$OPERATION] $*" >> "$LOG_FILE"
+}
+
+case "$OPERATION" in
+    prepare)
+        log_hook "Preparing VM launch: Applying safety & optimizations..."
+
+        # 1. CRITICAL SAFETY: Ensure 1TB Windows physical drive is unmounted
+        for part in $(lsblk -rno NAME,MOUNTPOINTS /dev/nvme0n1 2>/dev/null | awk '$2 != "" {print $1}'); do
+            log_hook "Unmounting /dev/$part to protect against filesystem corruption..."
+            sync
+            umount "/dev/$part" 2>> "$LOG_FILE" || {
+                log_hook "ERROR: Failed to unmount /dev/$part. Aborting VM start!"
+                exit 1
+            }
+        done
+
+        # 2. Performance: Set CPU governors to performance
+        for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo "performance" > "$gov" 2>/dev/null
+        done
+        log_hook "CPU governors switched to performance."
+
+        # 3. Performance: Compact memory
+        echo 1 > /proc/sys/vm/compact_memory 2>/dev/null
+        log_hook "Host memory compacted."
+
+        # 4. Looking Glass SHM: Verify /dev/shm/looking-glass
+        if [[ ! -e "/dev/shm/looking-glass" ]]; then
+            touch /dev/shm/looking-glass
+            chmod 0660 /dev/shm/looking-glass
+            chown :kvm /dev/shm/looking-glass 2>/dev/null || true
+            log_hook "Initialized /dev/shm/looking-glass."
+        fi
+        ;;
+
+    release)
+        log_hook "VM stopped: Restoring system state..."
+
+        # 1. Restore CPU governor to powersave
+        for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo "powersave" > "$gov" 2>/dev/null
+        done
+        log_hook "CPU governors restored to powersave."
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# vfio-launch - Automated Pre-Flight Safety & Performance VM Launcher
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+
+source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/detect.sh"
+source "${SCRIPT_DIR}/lib/preflight.sh"
+
+VM_NAME="${1:-win11}"
+
+cleanup_on_exit() {
+    log_header "Session Ended: Restoring Power Efficiency"
+    set_cpu_governor "powersave"
+}
+trap cleanup_on_exit EXIT INT TERM
+
+main() {
+    log_header "VFIO + Looking Glass Safe Launcher"
+
+    # 1. Pre-Flight Safety: 1TB NVMe Disk
+    if ! ensure_disk_safety "/dev/nvme0n1"; then
+        log_err "Pre-flight safety check failed. Aborting to protect your drive."
+        exit 1
+    fi
+
+    # 2. Pre-Flight Safety: Looking Glass Shared Memory
+    ensure_shm_safety
+
+    # 3. Performance Tuning: Switch CPU governor to performance
+    set_cpu_governor "performance"
+
+    # 4. Performance Tuning: Compact RAM
+    compact_host_memory
+
+    # 5. Coordinate VM Start (if virsh is available)
+    if command -v virsh >/dev/null 2>&1; then
+        local virsh_cmd="virsh -c qemu:///system"
+
+        if [[ -z "$VM_NAME" ]]; then
+            local discovered
+            discovered=$($virsh_cmd list --all --name 2>/dev/null | grep -v "^$" | head -n 1 || true)
+            VM_NAME="${discovered:-win11}"
+        fi
+
+        local vm_state
+        vm_state=$($virsh_cmd domstate "$VM_NAME" 2>/dev/null || echo "shut off")
+
+        if [[ "$vm_state" != "running" ]]; then
+            log_step "Starting Virtual Machine: ${VM_NAME}"
+            if $virsh_cmd start "$VM_NAME"; then
+                log_success "VM ${VM_NAME} started."
+            else
+                log_warn "Could not start VM via virsh (it may not be defined yet, or requires virt-manager)."
+            fi
+        else
+            log_info "VM ${VM_NAME} is already running."
+        fi
+    fi
+
+    # 6. Launch Looking Glass Client
+    log_step "Launching Looking Glass Client"
+    if command -v looking-glass-client >/dev/null 2>&1; then
+        log_info "Starting looking-glass-client with hardware EGL backend..."
+        local spice_args=()
+        if ss -tln 2>/dev/null | grep -q ":5900\b"; then
+            spice_args+=("spice:enable=yes" "spice:port=5900")
+        else
+            spice_args+=("spice:enable=no")
+        fi
+        looking-glass-client -f /dev/shm/looking-glass -g egl "${spice_args[@]}" "$@" || true
+    else
+        log_warn "looking-glass-client is not yet installed in PATH."
+        log_info "Once installed, run: looking-glass-run"
+        read -r -p "Press [Enter] to stop session and restore power profile..."
+    fi
+}
+
+main "$@"

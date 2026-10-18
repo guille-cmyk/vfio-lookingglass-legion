@@ -1,0 +1,21 @@
+# Virtual disk images and ISOs
+*.qcow2
+*.raw
+*.img
+*.iso
+*.vmdk
+
+# Temporary & backup files
+*.bak*
+*.tmp
+*.log
+*.ppm
+*.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local system files
+.DS_Store
+Thumbs.db
